@@ -17,7 +17,7 @@ A small command-line utility that finds and concatenates multiple files' content
 1. Clone this repository:
 ```bash
 git clone https://github.com/andytan07/concat-files
-cd concat_files
+cd concat-files
 ```
 
 2. Make the script executable:
