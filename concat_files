@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+
+"""
+File Content Concatenator
+Finds specified files in current directory tree and concatenates their contents to clipboard in XML format.
+Supports glob patterns and exact filenames.
+"""
+
+import sys
+import subprocess
+from pathlib import Path
+import fnmatch
+
+# Directories to exclude from search
+excluded_directories = {
+    'node_modules',
+    '.git',
+    'dist',
+    'build',
+    'coverage',
+    'vendor'    # Add more directories to exclude
+}
+
+def copy_to_clipboard(text):
+    """Cross-platform clipboard copy function."""
+    platform = sys.platform
+    try:
+        if platform == 'darwin':  # macOS
+            process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
+            process.communicate(text.encode('utf-8'))
+        elif platform == 'win32':  # Windows
+            process = subprocess.Popen(['clip'], stdin=subprocess.PIPE)
+            process.communicate(text.encode('utf-8'))
+        else:  # Linux and other Unix-like
+            process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
+            process.communicate(text.encode('utf-8'))
+        return True
+    except Exception as e:
+        print(f"Failed to copy to clipboard: {e}", file=sys.stderr)
+        return False
+
+def should_process_directory(path):
+    """Check if directory should be processed."""
+    return not any(excluded_dir in path.parts for excluded_dir in excluded_directories)
+
+def is_glob_pattern(pattern):
+    """Check if a pattern contains glob characters."""
+    return any(char in pattern for char in '*?[]!')
+
+def matches_any_pattern(filename, patterns):
+    """Check if filename matches any of the glob patterns."""
+    return any(fnmatch.fnmatch(filename, pattern) for pattern in patterns)
+
+def get_relative_path(path):
+    """Get relative path from current working directory."""
+    try:
+        return str(path.relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+def find_and_concat_files(patterns):
+    """Find and concatenate files matching the patterns."""
+    concatenated_content = []
+    found_files = set()  # Keep track of files we've already processed
+    cwd = Path.cwd()
+
+    # Separate glob patterns from exact filenames
+    glob_patterns = [p for p in patterns if is_glob_pattern(p)]
+    exact_files = set(p for p in patterns if not is_glob_pattern(p))
+
+    # Use generator to avoid loading all paths into memory
+    for path in cwd.rglob('*'):
+        if not path.is_file() or not should_process_directory(path):
+            continue
+
+        filename = path.name
+        should_process = False
+
+        if glob_patterns and matches_any_pattern(filename, glob_patterns):
+            should_process = True
+
+        if filename in exact_files:
+            should_process = True
+            exact_files.remove(filename)  # Remove from pending exact files
+
+        if should_process and filename not in found_files:
+            try:
+                content = path.read_text(encoding='utf-8')
+                relative_path = get_relative_path(path)
+
+                # Format in XML style with raw content
+                formatted_content = f'<file path="{relative_path}">\n{content}</file>\n'
+
+                concatenated_content.append(formatted_content)
+                found_files.add(filename)
+
+                print(f"Found and processed: {relative_path}")
+
+            except Exception as e:
+                print(f"Error processing {path.name}: {e}", file=sys.stderr)
+
+    # Report any exact-match files that weren't found
+    if exact_files:
+        print("\nWarning: The following files were not found:", file=sys.stderr)
+        for file in exact_files:
+            print(f"- {file}", file=sys.stderr)
+
+    # Report if no files were found for glob patterns
+    if glob_patterns and not any(found_files):
+        print("\nWarning: No files were found matching the glob patterns:", file=sys.stderr)
+        for pattern in glob_patterns:
+            print(f"- {pattern}", file=sys.stderr)
+
+    return ''.join(concatenated_content)
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: concat_files <file_pattern1> [file_pattern2 ...]", file=sys.stderr)
+        print("Examples:", file=sys.stderr)
+        print("  concat_files user.component.*", file=sys.stderr)
+        print("  concat_files user*.component.* task.component.ts", file=sys.stderr)
+        sys.exit(1)
+
+    patterns = sys.argv[1:]
+    concatenated_content = find_and_concat_files(patterns)
+
+    if not concatenated_content:
+        print("No files were found or processed.", file=sys.stderr)
+        sys.exit(1)
+
+    # Copy to clipboard
+    if copy_to_clipboard(concatenated_content):
+        print("\nSuccessfully copied content to clipboard!")
+        print(f"Processed {len(concatenated_content.split('<file path=')) - 1} files")
+    else:
+        print("\nFailed to copy to clipboard. Here's the content:\n")
+        print(concatenated_content)
+
+if __name__ == "__main__":
+    main()
